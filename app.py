@@ -12,9 +12,15 @@ st.markdown("Tracking **OI Shifts, IV Spread, Straddle & Proxy CVD** for Option 
 
 # --- SIDEBAR ---
 st.sidebar.header("API Configuration")
-client_id = st.sidebar.text_input("Dhan Client ID", "")
-access_token = st.sidebar.text_input("Dhan Access Token", "")
-
+# Check if running on Streamlit Cloud
+if 'DHAN_CLIENT_ID' in st.secrets:
+    client_id = st.secrets["DHAN_CLIENT_ID"]
+    access_token = st.secrets["DHAN_ACCESS_TOKEN"]
+    st.sidebar.success("API Keys loaded from Secrets!")
+else:
+    # Fallback for local running
+    client_id = st.sidebar.text_input("Dhan Client ID", "")
+    access_token = st.sidebar.text_input("Dhan Access Token", "")
 st.sidebar.header("Instrument Settings")
 index_choice = st.sidebar.selectbox("Select Index", ["NIFTY", "BANKNIFTY"])
 security_ids = {
