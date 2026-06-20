@@ -10,17 +10,19 @@ st.set_page_config(page_title="Logical Option Buying Dashboard", layout="wide")
 st.title("🚀 Logical Leading Indicator Dashboard (Nifty/BankNifty)")
 st.markdown("Tracking **OI Shifts, IV Spread, Straddle & Proxy CVD** for Option Buying Entries")
 
-# --- SIDEBAR ---
+# --- SIDEBAR & API CONFIGURATION ---
 st.sidebar.header("API Configuration")
-# Check if running on Streamlit Cloud
-if 'DHAN_CLIENT_ID' in st.secrets:
+
+# Check if running on Streamlit Cloud (safely)
+try:
     client_id = st.secrets["DHAN_CLIENT_ID"]
     access_token = st.secrets["DHAN_ACCESS_TOKEN"]
-    st.sidebar.success("API Keys loaded from Secrets!")
-else:
+    st.sidebar.success("API Keys loaded from Cloud Secrets!")
+except:
     # Fallback for local running
     client_id = st.sidebar.text_input("Dhan Client ID", "")
     access_token = st.sidebar.text_input("Dhan Access Token", "")
+
 st.sidebar.header("Instrument Settings")
 index_choice = st.sidebar.selectbox("Select Index", ["NIFTY", "BANKNIFTY"])
 security_ids = {
@@ -81,7 +83,9 @@ if client_id and access_token:
                 spot_price = None
                 source = ""
                 
-                # 1. FETCH SPOT PRICE
+                # ==========================================
+                # 1. FETCH SPOT PRICE (Live first, then Historical)
+                # ==========================================
                 quote_res = requests.post("https://api.dhan.co/v2/quote", json={"IDX_I": [underlying_id]}, headers=headers)
                 quote_json = quote_res.json()
                 
@@ -89,7 +93,7 @@ if client_id and access_token:
                     spot_price = quote_json['data']['IDX_I'][0].get('last_price', 0)
                     source = "Live Spot"
                 else:
-                    # Fallback to Historical Data
+                    # Fallback to Historical Data if market is closed
                     today_str = datetime.now().strftime('%Y-%m-%d')
                     start_str = (datetime.now() - timedelta(days=5)).strftime('%Y-%m-%d')
                     hist_payload = {
@@ -116,7 +120,9 @@ if client_id and access_token:
                     spot_price_placeholder.metric(f"Spot Price ({source})", f"₹{spot_price:.2f}")
                     atm_strike_placeholder.metric("ATM Strike", atm_strike)
                     
+                    # ==========================================
                     # 2. FETCH OPTION CHAIN
+                    # ==========================================
                     oc_res = requests.post("https://api.dhan.co/v2/optionchain", json={"underlyingScrip": int(underlying_id), "underlyingSeg": "IDX_I"}, headers=headers)
                     oc_json = oc_res.json()
                     
@@ -201,7 +207,9 @@ if client_id and access_token:
                         call_oi_placeholder.warning("Option Chain unavailable")
                         put_oi_placeholder.warning("Option Chain unavailable")
                         
+                    # ==========================================
                     # 3. UPDATE CVD & TIMESTAMP
+                    # ==========================================
                     current_time = datetime.now().strftime('%H:%M:%S')
                     status_placeholder.caption(f"Last Updated: {current_time}")
                     
@@ -227,6 +235,8 @@ if client_id and access_token:
                         xaxis=dict(showgrid=True, gridcolor='rgba(50,50,50,0.5)'),
                         yaxis=dict(showgrid=True, gridcolor='rgba(50,50,50,0.5)')
                     )
+                    
+                    # Fix for Streamlit duplicate ID error: pass a unique key using the loop index 'i'
                     cvd_chart_placeholder.plotly_chart(fig, use_container_width=True, key=f"cvd_chart_{i}")
                     
             except Exception as e:
