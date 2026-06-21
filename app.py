@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Logical Option Buying Dashboard", layout="wide")
 st.title("🚀 Logical Leading Indicator Dashboard (Nifty/BankNifty)")
-st.markdown("Tracking **OI Shifts, IV Spread, Straddle & Proxy CVD** for Option Buying Entries")
+st.markdown("Tracking **OI Shifts, IV Spread, Dealer Positioning & CVD** for Option Buying Entries")
 
 # --- SIDEBAR & API CONFIGURATION ---
 st.sidebar.header("API Configuration")
@@ -52,6 +52,10 @@ with col3:
     iv_signal_placeholder = st.empty()
 
 st.divider()
+
+# New Dealer Positioning Row
+st.subheader("🧮 Dealer Positioning (Delta Proxy)")
+dealer_placeholder = st.empty()
 
 # Signal Engine Row
 st.subheader("🧠 Confluence Trade Signal")
@@ -134,7 +138,7 @@ if client_id and access_token:
                             ce_data = oc[atm_str].get('ce', {})
                             pe_data = oc[atm_str].get('pe', {})
                             
-                            # Extract Data
+                            # Extract ATM Data
                             c_oi = ce_data.get('oi', 0)
                             p_oi = pe_data.get('oi', 0)
                             c_oi_chg = ce_data.get('oi_change', 0) or 0
@@ -190,16 +194,53 @@ if client_id and access_token:
                             oi_signal_placeholder.info(oi_text)
                             iv_signal_placeholder.info(iv_text)
                             
+                            # --- LOGIC 3: DEALER POSITIONING PROXY ---
+                            # Calculate Dealer Delta across top 5 ITM/OTM strikes
+                            total_dealer_delta = 0
+                            for strike_str, options in oc.items():
+                                try:
+                                    strike = int(strike_str)
+                                    diff = strike - atm_strike
+                                    
+                                    # Rough Delta Proxy based on distance from Spot
+                                    if diff <= -step * 2: c_delta, p_delta = 0.90, -0.10
+                                    elif diff <= -step: c_delta, p_delta = 0.75, -0.25
+                                    elif diff == 0: c_delta, p_delta = 0.50, -0.50
+                                    elif diff >= step * 2: c_delta, p_delta = 0.10, -0.90
+                                    elif diff >= step: c_delta, p_delta = 0.25, -0.75
+                                    else: c_delta, p_delta = 0.50, -0.50
+                                        
+                                    c_oi_proxy = options.get('ce', {}).get('oi', 0) or 0
+                                    p_oi_proxy = options.get('pe', {}).get('oi', 0) or 0
+                                    
+                                    # Dealers are assumed short options. 
+                                    # Dealer Delta = (Short Put OI * |Put Delta|) - (Short Call OI * Call Delta)
+                                    strike_dealer_delta = (p_oi_proxy * abs(p_delta)) - (c_oi_proxy * c_delta)
+                                    total_dealer_delta += strike_dealer_delta
+                                except:
+                                    pass
+                                    
+                            if total_dealer_delta > 0:
+                                bearish_score += 1
+                                dealer_text = f"Dealers Long Delta ({total_dealer_delta/100000:.1f}L) -> Need to Sell Futures (Bearish)"
+                            elif total_dealer_delta < 0:
+                                bullish_score += 1
+                                dealer_text = f"Dealers Short Delta ({abs(total_dealer_delta)/100000:.1f}L) -> Need to Buy Futures (Bullish Squeeze)"
+                            else:
+                                dealer_text = "Dealer Delta neutral"
+                                
+                            dealer_placeholder.info(dealer_text)
+                            
                             # Final Signal Output
-                            if bullish_score == 2:
+                            if bullish_score >= 2:
                                 signal_engine_placeholder.success(f"🟢 STRONG BUY CALL SIGNAL | Scores: Bull={bullish_score}, Bear={bearish_score}")
-                                st.session_state.cvd_history.append(st.session_state.cvd_history[-1] + 15) # Mock CVD goes up
-                            elif bearish_score == 2:
+                                st.session_state.cvd_history.append(st.session_state.cvd_history[-1] + 15) # CVD goes up
+                            elif bearish_score >= 2:
                                 signal_engine_placeholder.error(f"🔴 STRONG BUY PUT SIGNAL | Scores: Bull={bullish_score}, Bear={bearish_score}")
-                                st.session_state.cvd_history.append(st.session_state.cvd_history[-1] - 15) # Mock CVD goes down
+                                st.session_state.cvd_history.append(st.session_state.cvd_history[-1] - 15) # CVD goes down
                             else:
                                 signal_engine_placeholder.warning(f"🟡 WAIT FOR CONFLUENCE | Mixed signals. Bull={bullish_score}, Bear={bearish_score}")
-                                st.session_state.cvd_history.append(st.session_state.cvd_history[-1] + 2) # Mock CVD sideways
+                                st.session_state.cvd_history.append(st.session_state.cvd_history[-1] + 2) # CVD sideways
                                 
                         else:
                             call_oi_placeholder.warning(f"ATM {atm_str} not in chain.")
@@ -236,8 +277,8 @@ if client_id and access_token:
                         yaxis=dict(showgrid=True, gridcolor='rgba(50,50,50,0.5)')
                     )
                     
-                    # Fix for Streamlit duplicate ID error: pass a unique key using the loop index 'i'
-                    cvd_chart_placeholder.plotly_chart(fig, use_container_width=True, key=f"cvd_chart_{i}")
+                    # Fix for Streamlit ID error and width warning
+                    cvd_chart_placeholder.plotly_chart(fig, width="stretch", key=f"cvd_chart_{i}")
                     
             except Exception as e:
                 st.error(f"Loop Error: {e}")
@@ -254,9 +295,10 @@ st.divider()
 with st.expander("📜 Logical Strategy Playbook", expanded=True):
     st.markdown("""
     **How the Confluence Engine Works:**
-    The app scores the market on two logical parameters:
-    1. **OI Change (Who is writing today?):** If Put OI is added more than Call OI, it is Bullish (Put writers support the market).
-    2. **IV Skew (Who is buying aggressively?):** If Call IV > Put IV, it is Bullish (Call buyers expect breakout).
+    The app scores the market on three logical parameters:
+    1. **OI Change:** If Put OI is added more than Call OI, it is Bullish (Put writers support the market).
+    2. **IV Skew:** If Call IV > Put IV, it is Bullish (Call buyers expect breakout).
+    3. **Dealer Positioning:** If Dealers are heavily short Calls (Negative Dealer Delta), they must buy Futures to hedge, creating a Gamma Squeeze (Bullish). If short Puts, they must sell Futures (Bearish).
     
     **Reading the Expected Move (Straddle):**
     - ATM Straddle = Call LTP + Put LTP.
